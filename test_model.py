@@ -21,6 +21,7 @@ class SegmentAndMap:
         self.im = []
         self.root_dir = aoi_path
         self.masks_path = f"{self.root_dir}/PS-RGB_8bit/raw_masks"
+        self.proc_path = f"{self.root_dir}/PS-RGB_8bit/processed"
         self.road_kernel_size = 9
         self.building_kernel_size = 13
     def load_img_from_im_num(self, im_num):
@@ -131,8 +132,35 @@ class SegmentAndMap:
         ret_img = cv2.add(ret_img, building_polygons_red)
         self.im_display = ret_img
         return self.im_display
-    
-    def display(self):
+    def display_plt(self, save = False):
+        # cv2.imshow('Image', self.im_display)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        plt_img = cv2.cvtColor(self.im_display, cv2.COLOR_BGR2RGB)
+        w_p, h_p, _ = self.im_display.shape
+        fig, ax = plt.subplots(facecolor='black', figsize=(12, 12))
+        ax.imshow(plt_img)
+        xlabels = [floatdeg2str(e) for e in np.linspace(self.im_bounds.left, self.im_bounds.right, 5)]
+        ylabels = [floatdeg2str(e) for e in np.linspace(self.im_bounds.bottom, self.im_bounds.top, 5)]
+
+        # Use set_xticks and set_yticks to set ticks
+        ax.set_xticks(np.linspace(0, w_p, 5))
+        ax.set_yticks(np.linspace(0, h_p, 5))
+
+        # Use set_xticklabels and set_yticklabels to set labels
+        ax.set_xticklabels(xlabels, color='white')
+        ax.set_yticklabels(ylabels, color='white')
+
+        ax.grid(color='w', dashes = (1, 5))
+
+        # Use fig.savefig to save the figure
+        if save:
+            fig.savefig(f"{self.proc_path}/img{self.im_num}.png")
+
+        plt.show()
+        # print(self.im_display.shape)
+        return 
+    def display_cv2(self):
         cv2.imshow('Image', self.im_display)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
@@ -144,22 +172,26 @@ class SegmentAndMap:
         print("Transform Information:")
         print("Affine Matrix:")
         print(transform)
+        self.im_bounds = bounds
+        self.transform = transform
         print(f"Bounds = {bounds}")
         # Additional information
         print("\nNumber of Bands:", dataset.count)
         print("Raster Size (width, height):", dataset.width, dataset.height)
         print("CRS (Coordinate Reference System):", dataset.crs)
         return 
+    def get_road_graph(self):
+        _, b_road_skeleton = cv2.threshold(self.road_skeleton, 127, 255, cv2.THRESH_BINARY) 
+        self.road_graph = sknw.build_sknw(b_road_skeleton)
+        return self.road_graph
 
-
-
-
-
-
-
-
-
-
+def floatdeg2str(fdeg):
+    sign = -1 if fdeg < 0 else 1
+    fdeg = abs(fdeg)
+    sdeg = int(fdeg)
+    smin = int((fdeg - sdeg)*60)
+    ssec = (fdeg - sdeg - smin/60)*60*60
+    return f"{sign * sdeg}° {smin}' {ssec:.2f}\""
 
 def get_road_graph(road_skeleton):
     _, b_road_skeleton = cv2.threshold(road_skeleton, 127, 255, cv2.THRESH_BINARY) 
@@ -223,7 +255,8 @@ if(__name__=="__main__"):
     map1.polygonize_building_mask()
     map1.blend_img_with_masks()
     map1.burn_outlines(dilate_kernel_size=1)
-    map1.display()
+    # map1.display_cv2()
+    map1.display_plt(save=True)
 
     # # arbitrary_img_fpath = f"/mnt/l1/auto_top/SN3/data/mumbai_test.png"
     # print_transform_and_ref(fname_from_fnum(sn3_im_nums[3]))
