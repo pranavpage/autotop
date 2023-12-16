@@ -5,7 +5,9 @@
 # !pip install -U git+https://github.com/albu/albumentations
 import tensorflow as tf 
 import cv2, os, re, sknw, rasterio
+import rasterio.warp
 from osgeo import gdal
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 os.environ["SM_FRAMEWORK"] = "tf.keras"
 import matplotlib.pyplot as plt 
 import numpy as np 
@@ -158,11 +160,17 @@ class SegmentAndMap:
         ax.set_yticklabels(ylabels, color='white')
 
         ax.grid(color='w', dashes = (1, 5))
-
+        num_pixels = int(1e2/self.pixel_sizes[0])
+        scalebar = AnchoredSizeBar(ax.transData,
+                           num_pixels, '100 m', 'lower right', 
+                           pad=0.1,
+                           color='white',
+                           frameon=False,
+                           size_vertical=1)
+        ax.add_artist(scalebar)
         # Use fig.savefig to save the figure
         if save:
             fig.savefig(f"{self.proc_path}/img{self.im_num}.png")
-
         plt.show()
         # print(self.im_display.shape)
         return 
@@ -171,20 +179,39 @@ class SegmentAndMap:
         cv2.waitKey(0)
         cv2.destroyAllWindows()
         return 
-    def print_transform_information(self):
-        with rasterio.open(self.im_path) as dataset:
-            transform = dataset.transform
-            bounds = dataset.bounds
+    def get_transform_information(self):
+        with rasterio.open(self.im_path) as src:
+            transform = src.transform
+            bounds = src.bounds
+            target_crs = 'EPSG:3857'
+            # Set the width and height of the target raster (adjust as needed)
+            target_width = src.width
+            target_height = src.height
+
+            # Reproject the dataset to the target CRS
+            dst_crs = target_crs
+            dst_transform, dst_width, dst_height = rasterio.warp.calculate_default_transform(
+            src.crs, target_crs, src.width, src.height, *src.bounds, dst_width=target_width, dst_height=target_height
+            )
+
+            # Calculate the new pixel size in the x and y directions
+            pixel_size_x = abs(dst_transform[0])
+            pixel_size_y = abs(dst_transform[4])
+
+            print(f'Pixel size (width) after reprojection: {pixel_size_x} meters')
+            print(f'Pixel size (height) after reprojection: {pixel_size_y} meters')
+
         print("Transform Information:")
         print("Affine Matrix:")
         print(transform)
         self.im_bounds = bounds
         self.transform = transform
+        self.pixel_sizes = [pixel_size_x, pixel_size_y]
         print(f"Bounds = {bounds}")
         # Additional information
-        print("\nNumber of Bands:", dataset.count)
-        print("Raster Size (width, height):", dataset.width, dataset.height)
-        print("CRS (Coordinate Reference System):", dataset.crs)
+        print("\nNumber of Bands:", src.count)
+        print("Raster Size (width, height):", src.width, src.height)
+        print("CRS (Coordinate Reference System):", src.crs)
         return 
 
 def floatdeg2str(fdeg):
@@ -195,43 +222,6 @@ def floatdeg2str(fdeg):
     ssec = (fdeg - sdeg - smin/60)*60*60
     return f"{sign * sdeg}° {smin}' {ssec:.2f}\""
 
-def get_road_graph(road_skeleton):
-    _, b_road_skeleton = cv2.threshold(road_skeleton, 127, 255, cv2.THRESH_BINARY) 
-    graph = sknw.build_sknw(b_road_skeleton)
-    print(graph)
-    # draw image
-    plt.imshow(img, cmap='gray')
-
-    # draw edges by pts
-    for (s,e) in graph.edges():
-        ps = graph[s][e]['pts']
-        plt.plot(ps[:,1], ps[:,0], 'green')
-    # draw node by o
-    nodes = graph.nodes()
-    ps = np.array([nodes[i]['o'] for i in nodes])
-    plt.plot(ps[:,1], ps[:,0], 'y.')
-    plt.show()
-    return graph
-
-def print_transform_and_ref(fpath):
-    dataset = gdal.Open(fpath)
-
-    # Get the geotransform information
-    geotransform = dataset.GetGeoTransform()
-
-    # Print the geotransform information
-    print("Geotransform:")
-    print("Origin (top left corner):", geotransform[0], geotransform[3])
-    print("Pixel Size:", geotransform[1], geotransform[5])
-    print("Rotation/Skew:", geotransform[2], geotransform[4])
-
-    # Get the spatial reference information
-    spatial_reference = dataset.GetProjection()
-
-    # Print the spatial reference information
-    print("\nSpatial Reference:")
-    print(spatial_reference)
-    return
 if(__name__=="__main__"):
     # sn3_model_path = "/mnt/l1/auto_top/SN3/models/unet_sn3_high.h5"
     # sn2_model_path = "/mnt/l1/auto_top/SN2/models/unet_sn2.h5"
@@ -246,7 +236,7 @@ if(__name__=="__main__"):
 
     map1 = SegmentAndMap(aoi_path=aoi_path)
     map1.load_img_from_im_num(sn3_im_nums[3])
-    map1.print_transform_information()
+    map1.get_transform_information()
     map1.load_models()
     map1.get_raw_masks()
     map1.refine_masks()
