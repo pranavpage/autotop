@@ -140,10 +140,11 @@ class SegmentAndMap:
     def print_transform_information(self):
         with rasterio.open(self.im_path) as dataset:
             transform = dataset.transform
+            bounds = dataset.bounds
         print("Transform Information:")
         print("Affine Matrix:")
         print(transform)
-
+        print(f"Bounds = {bounds}")
         # Additional information
         print("\nNumber of Bands:", dataset.count)
         print("Raster Size (width, height):", dataset.width, dataset.height)
