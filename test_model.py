@@ -106,7 +106,9 @@ class SegmentAndMap:
         return self.road_mask, self.building_mask
     def skeletonize_road_mask(self):
         self.road_skeleton = np.uint8(skeletonize(self.road_mask)*255)
-        return self.road_skeleton
+        _, b_road_skeleton = cv2.threshold(self.road_skeleton, 127, 255, cv2.THRESH_BINARY) 
+        self.road_graph = sknw.build_sknw(b_road_skeleton)
+        return self.road_skeleton, self.road_graph
     def polygonize_building_mask(self):
         contours, _ = cv2.findContours(self.building_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         bounding_polygons_image = np.zeros_like(self.building_mask, dtype=np.uint8)
@@ -142,7 +144,11 @@ class SegmentAndMap:
         ax.imshow(plt_img)
         xlabels = [floatdeg2str(e) for e in np.linspace(self.im_bounds.left, self.im_bounds.right, 5)]
         ylabels = [floatdeg2str(e) for e in np.linspace(self.im_bounds.bottom, self.im_bounds.top, 5)]
-
+        
+        if(self.road_graph):
+            nodes = self.road_graph.nodes()
+            ps = np.array([nodes[i]['o'] for i in nodes])
+            ax.plot(ps[:,1], ps[:,0], 'y.')
         # Use set_xticks and set_yticks to set ticks
         ax.set_xticks(np.linspace(0, w_p, 5))
         ax.set_yticks(np.linspace(0, h_p, 5))
@@ -180,10 +186,6 @@ class SegmentAndMap:
         print("Raster Size (width, height):", dataset.width, dataset.height)
         print("CRS (Coordinate Reference System):", dataset.crs)
         return 
-    def get_road_graph(self):
-        _, b_road_skeleton = cv2.threshold(self.road_skeleton, 127, 255, cv2.THRESH_BINARY) 
-        self.road_graph = sknw.build_sknw(b_road_skeleton)
-        return self.road_graph
 
 def floatdeg2str(fdeg):
     sign = -1 if fdeg < 0 else 1
