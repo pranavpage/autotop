@@ -64,7 +64,15 @@ def get_road_im_masks(im_path, gj_path, im_num, out_img_dir, out_mask_dir,
         fill=0,
         dtype=rasterio.uint8
     )
-        
+        # save image
+        output_img_path = f"{out_img_dir}/img{im_num}.tif"
+    # save mask 
+    output_mask_path = f"{out_mask_dir}/img{im_num}.png"
+    plt.imsave(output_mask_path, burned_polygons, cmap='gray', format='png')
+
+    # save image
+    output_img_path = f"{out_img_dir}/img{im_num}.tif"
+    os.system(f"cp {im_path} {output_img_path}")
     # plot_polygons_with_extent(gdf_utm_dissolve)
     return
 
@@ -105,10 +113,14 @@ def create_road_masks(path_tifs, path_geojson_roads, buffer_meters=2, burn_val=2
     # the data path is in path_root
     if(not path_root):
         path_root = os.getcwd()
-    output_img_dir = f"{path_root}/road/img"
-    output_mask_dir = f"{path_root}/road/label"
+    output_img_dir = f"{path_root}/data/road/img"
+    output_mask_dir = f"{path_root}/data/road/label"
+    if(not os.path.isdir(output_img_dir)):
+        os.makedirs(output_img_dir)
+    if(not os.path.isdir(output_mask_dir)):
+        os.makedirs(output_mask_dir)
     raw_8bit_img_list = sorted(os.listdir(path_tifs))
-    print(f"Raw image filenames (8 bit) = {raw_8bit_img_list}")
+    # print(f"Raw image filenames (8 bit) = {raw_8bit_img_list}")
 
     for im_name in raw_8bit_img_list[:num_images]:
         print(im_name)
