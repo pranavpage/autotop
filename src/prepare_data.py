@@ -5,6 +5,10 @@
 # look at functions from create_spacenet_masks.py and apls_utils, write your own
 import os, re, rasterio, glob, time
 import numpy as np
+import geopandas as gpd
+import matplotlib.pyplot as plt 
+from rasterio.warp import transform_geom
+from rasterio.features import rasterize
 def create_building_masks():
     return
 
@@ -38,8 +42,32 @@ def batch_convert_to_8bit(path_raw_tifs, path_tifs, overwrite=True, percs = [2,9
                     dst.write(scaled_data)
     return
 
-def get_road_buffer():
+def get_road_im_masks(im_path, gj_path, im_num, out_img_dir, out_mask_dir,
+                      buffer_meters, burn_val, gdf_crs):
+    # Open image, create buffer around road, burn shape to image bounds 
+    # store image and mask in output
+    gdf = gpd.read_file(gj_path)
+    gdf_utm = gdf.to_crs(gdf_crs)
+    gdf_utm_buffered = gdf_utm.copy()
+    gdf_utm_buffered['geometry'] = gdf_utm.buffer(buffer_meters, cap_style = 1) 
+    gdf_utm_dissolve = gdf_utm_buffered.dissolve(by='road_type')
+    # shapes ready
+    print(f"GDF crs = {gdf_utm_dissolve.crs}")
+    with rasterio.open(im_path) as im:
+        print(f"Image crs = {im.crs}")
+        transformed_geometries = [transform_geom(gdf_utm_dissolve.crs, im.crs, shape) 
+                                  for shape in gdf_utm_dissolve.geometry]
+        burned_polygons = rasterize(
+        [(geom, burn_val) for geom in transformed_geometries],
+        out_shape=im.shape,
+        transform=im.transform,
+        fill=0,
+        dtype=rasterio.uint8
+    )
+        
+    # plot_polygons_with_extent(gdf_utm_dissolve)
     return
+
 
 def get_im_num(im_name):
     p = re.compile("(?<=img)\d+")
@@ -47,8 +75,30 @@ def get_im_num(im_name):
     im_num = res.group(0)
     return im_num
 
-def create_road_masks(path_tifs, path_geojson_roads, buffer_meters=2, burn_val=200,
-                      path_root=None, overwrite=True, num_images = 2, 
+def plot_polygons_with_extent(gdf, idx=0):
+    # Check if the input is a GeoDataFrame
+    if not isinstance(gdf, gpd.GeoDataFrame):
+        raise ValueError("Input must be a GeoDataFrame.")
+
+    # Plot all the polygons in the GeoDataFrame
+    ax = gdf.plot(marker='o', markersize=5, color='k', edgecolor = 'g')
+
+    # Get the extent of the GeoDataFrame
+    xmin, ymin, xmax, ymax = gdf.total_bounds
+
+    # Add a rectangle to show the extent
+    ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin, 
+                               linewidth=2, edgecolor='red', facecolor='none'))
+
+    # Add labels, title, etc., as needed
+    plt.xlabel("Longitude")
+    plt.ylabel("Latitude")
+    plt.title("Polygons Visualization with Extent")
+    plt.show()
+    # Show the plot
+
+def create_road_masks(path_tifs, path_geojson_roads, buffer_meters=2, burn_val=255,
+                      path_root=None, overwrite=True, num_images = 1, gdf_crs = 27561,
                       gj_file_pattern="SN3_roads_train_AOI_3_Paris_geojson_roads_img{}.geojson"):
     # with the 8 bit .tif files in path_tifs,  
     # create road masks with the shapes in the directory path_geojson_roads
@@ -70,7 +120,9 @@ def create_road_masks(path_tifs, path_geojson_roads, buffer_meters=2, burn_val=2
         gj_path = f"{path_geojson_roads}/{gj_fname}"
         if(os.path.isfile(gj_path)):
             print("gj file exists")
-
+            get_road_im_masks(im_path, gj_path, im_num, out_img_dir=output_img_dir, 
+                              out_mask_dir=output_mask_dir,
+                              buffer_meters=buffer_meters, burn_val=burn_val, gdf_crs=gdf_crs)
     return
 def extract_building_train_data():
     return
