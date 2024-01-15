@@ -45,31 +45,11 @@ class SegmentAndMap:
         self.im_display = self.im
         self.im_num = im_num
         return self.im 
-    def load_img_from_fpath(self, fpath):
-        im_path = fpath
-        self.im_path = im_path
-        im = imread(im_path)
-        im = im[:,:,:3]
-
-        # Pad the image to make both dimensions divisible by 32
-        pad_height = (32 - im.shape[0] % 32) % 32
-        pad_width = (32 - im.shape[1] % 32) % 32
-
-        padded_img = cv2.copyMakeBorder(im, pad_height // 2, pad_height - pad_height // 2,
-                                        pad_width // 2, pad_width - pad_width // 2,
-                                        cv2.BORDER_REFLECT)
-        w_p, h_p, _ = padded_img.shape
-        print(f"Loaded {im_path}, resized {im.shape} to {padded_img.shape}")
-        self.im = padded_img
-        self.im_display = self.im
-        self.im_num = 9999
-        return self.im 
     def load_models(self):
         sn3_model_path = "/mnt/l1/auto_top/SN3/models/unet_sn3_high.h5"
         sn2_model_path = "/mnt/l1/auto_top/SN2/models/unet_sn2.h5"
         self.road_model = tf.keras.models.load_model(sn3_model_path, compile=False)
         self.building_model = tf.keras.models.load_model(sn2_model_path, compile=False)
-        print(self.road_model.summary())
         return self.road_model, self.building_model
     def get_raw_masks(self):
         road_mask_path = f"{self.masks_path}/road_mask_img{self.im_num}.png"
@@ -109,24 +89,7 @@ class SegmentAndMap:
         self.im_display = overlay
         self.overlay = overlay
         return self.im_display
-    def plot_only(self, tget = "road"):
-        if(tget == "road"):
-            overlay = cv2.cvtColor(self.im, cv2.COLOR_BGR2GRAY)
-            overlay = cv2.merge([overlay, overlay, overlay])
-            road_mask = cv2.merge([np.zeros_like(self.road_mask), self.road_mask, np.zeros_like(self.road_mask)])
-            alpha_road = 0.2  # Adjust transparency (alpha) for roads
-            cv2.addWeighted(road_mask, alpha_road, overlay, 1 - alpha_road, 0, overlay)
-            self.im_display = overlay
-            pass
-        elif(tget == "building"):
-            overlay = cv2.cvtColor(self.im, cv2.COLOR_BGR2GRAY)
-            overlay = cv2.merge([overlay, overlay, overlay])
-            building_mask = cv2.merge([np.zeros_like(self.building_mask), np.zeros_like(self.building_mask), self.building_mask])
-            alpha_building = 0.2  # Adjust transparency (alpha) for buildings
-            cv2.addWeighted(building_mask, alpha_building, overlay, 1 - alpha_building, 0, overlay)
-            self.im_display = overlay
-            pass
-        return
+    
     def refine_masks(self, binarize_thr = 0.5, iters = 1, kernel_size = 5):
         # TODO : better to derive a road segmenter and a building segmenter from a class 
         _, b_road_mask = cv2.threshold(self.road_mask, int(binarize_thr*255), 255, cv2.THRESH_BINARY)
@@ -173,7 +136,7 @@ class SegmentAndMap:
         ret_img = cv2.add(ret_img, building_polygons_red)
         self.im_display = ret_img
         return self.im_display
-    def display_plt(self, save = False, show=True):
+    def display_plt(self, save = False):
         # cv2.imshow('Image', self.im_display)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
@@ -188,11 +151,9 @@ class SegmentAndMap:
             nodes = self.road_graph.nodes()
             ps = np.array([nodes[i]['o'] for i in nodes])
             ax.plot(ps[:,1], ps[:,0], 'y.')
-        # Use set_xticks and set_yticks to set ticks
         ax.set_xticks(np.linspace(0, w_p, 5))
         ax.set_yticks(np.linspace(0, h_p, 5))
 
-        # Use set_xticklabels and set_yticklabels to set labels
         ax.set_xticklabels(xlabels, color='white')
         ax.set_yticklabels(ylabels, color='white')
 
@@ -205,16 +166,12 @@ class SegmentAndMap:
                            frameon=False,
                            size_vertical=1)
         ax.add_artist(scalebar)
-        # Use fig.savefig to save the figure
         if save:
             fig.savefig(f"{self.proc_path}/img{self.im_num}.png")
-        if show:
-            plt.show()
+        plt.show()
         return 
-    def display_cv2(self, save = False, imtype = "road"):
+    def display_cv2(self):
         cv2.imshow('Image', self.im_display)
-        if(save):
-            cv2.imwrite(f"{self.proc_path}/cv2_{imtype}_img{self.im_num}.png", self.im_display)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
         return 
@@ -223,17 +180,14 @@ class SegmentAndMap:
             transform = src.transform
             bounds = src.bounds
             target_crs = 'EPSG:3857'
-            # Set the width and height of the target raster (adjust as needed)
             target_width = src.width
             target_height = src.height
 
-            # Reproject the dataset to the target CRS
             dst_crs = target_crs
             dst_transform, dst_width, dst_height = rasterio.warp.calculate_default_transform(
             src.crs, target_crs, src.width, src.height, *src.bounds, dst_width=target_width, dst_height=target_height
             )
 
-            # Calculate the new pixel size in the x and y directions
             pixel_size_x = abs(dst_transform[0])
             pixel_size_y = abs(dst_transform[4])
 
@@ -247,7 +201,6 @@ class SegmentAndMap:
         self.transform = transform
         self.pixel_sizes = [pixel_size_x, pixel_size_y]
         print(f"Bounds = {bounds}")
-        # Additional information
         print("\nNumber of Bands:", src.count)
         print("Raster Size (width, height):", src.width, src.height)
         print("CRS (Coordinate Reference System):", src.crs)
@@ -272,16 +225,13 @@ if(__name__=="__main__"):
     # test_path = "/mnt/l1/auto_top/SN3/data/Paris/images/AOI_3_Paris/seg_test_data"
 
     sn3_im_nums = [42, 49, 50, 99, 100, 132, 193, 219]
-
+    # P1 TODO : change root, change image loading
     map1 = SegmentAndMap(aoi_path=aoi_path)
     map1.load_img_from_im_num(sn3_im_nums[3])
-    # map1.load_img_from_fpath("/mnt/l1/auto_top/SN2/data/AOI_3_Paris_Train/seg_data/patch/img/img86.png")
     map1.get_transform_information()
     map1.load_models()
     map1.get_raw_masks()
     map1.refine_masks()
-    map1.plot_only("building")
-    map1.display_cv2(save=True, imtype="building")
     map1.blend_img_with_masks()
     # map1.display()
 
@@ -290,10 +240,8 @@ if(__name__=="__main__"):
     map1.blend_img_with_masks()
     map1.burn_outlines(dilate_kernel_size=1)
     # map1.display_cv2()
-    map1.display_plt(save=True, show=False)
-    #  MapBox, plotly, HTML 
-    # benchmarks : huggingface IoU
-    # operator : human feedback
+    map1.display_plt(save=True)
+
     # # arbitrary_img_fpath = f"/mnt/l1/auto_top/SN3/data/mumbai_test.png"
     # print_transform_and_ref(fname_from_fnum(sn3_im_nums[3]))
     # img, road_mask, building_mask = get_img_masks_raw(fname_from_fnum(sn3_im_nums[3]), road_model, building_model)
