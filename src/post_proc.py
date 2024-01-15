@@ -1,12 +1,7 @@
-# Script to test trained model
-# !pip install git+https://github.com/qubvel/efficientnet
-# !pip install git+https://github.com/qubvel/classification_models.git
-# !pip install git+https://github.com/qubvel/segmentation_models
-# !pip install -U git+https://github.com/albu/albumentations
+# Script to deploy models and merge predictions
 import tensorflow as tf 
 import cv2, os, re, sknw, rasterio
 import rasterio.warp
-from osgeo import gdal
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 os.environ["SM_FRAMEWORK"] = "tf.keras"
 import matplotlib.pyplot as plt 
@@ -19,20 +14,21 @@ from segmentation_models.losses import bce_jaccard_loss, bce_dice_loss
 from segmentation_models.metrics import iou_score
 
 class SegmentAndMap:
-    def __init__(self, aoi_path):
+    def __init__(self, data_path, models_path, proc_path, model_roads, model_buildings):
         self.im = []
-        self.root_dir = aoi_path
-        self.masks_path = f"{self.root_dir}/PS-RGB_8bit/raw_masks"
-        self.proc_path = f"{self.root_dir}/PS-RGB_8bit/processed"
+        self.data_path = data_path
+        self.models_path = models_path
+        self.proc_path = proc_path
+        self.model_roads = model_roads
+        self.model_buildings = model_buildings
         self.road_kernel_size = 9
         self.building_kernel_size = 13
-    def load_img_from_im_num(self, im_num):
-        im_path = f"{self.root_dir}/PS-RGB_8bit/SN3_roads_train_AOI_3_Paris_PS-RGB_img{im_num}.tif"
+    def load_img_from_im_num(self, im_num, dset = 'road'):
+        im_path = f"{self.data_path}/{dset}/img/img{im_num}.tif"
         self.im_path = im_path
         im = imread(im_path)
         im = im[:,:,:3]
 
-        # Pad the image to make both dimensions divisible by 32
         pad_height = (32 - im.shape[0] % 32) % 32
         pad_width = (32 - im.shape[1] % 32) % 32
 
@@ -44,32 +40,43 @@ class SegmentAndMap:
         self.im = padded_img
         self.im_display = self.im
         self.im_num = im_num
+        # P2 TODO : Load only once
+        # Some img info
+        with rasterio.open(self.im_path) as src:
+            transform = src.transform
+            bounds = src.bounds
+            target_crs = 'EPSG:3857'
+            target_width = src.width
+            target_height = src.height
+
+            dst_crs = target_crs
+            dst_transform, dst_width, dst_height = rasterio.warp.calculate_default_transform(
+            src.crs, target_crs, src.width, src.height, *src.bounds, dst_width=target_width, dst_height=target_height
+            )
+
+            pixel_size_x = abs(dst_transform[0])
+            pixel_size_y = abs(dst_transform[4])
+
+
+        self.im_bounds = bounds
+        self.transform = transform
+        self.pixel_sizes = [pixel_size_x, pixel_size_y]
         return self.im 
     def load_models(self):
-        sn3_model_path = "/mnt/l1/auto_top/SN3/models/unet_sn3_high.h5"
-        sn2_model_path = "/mnt/l1/auto_top/SN2/models/unet_sn2.h5"
-        self.road_model = tf.keras.models.load_model(sn3_model_path, compile=False)
-        self.building_model = tf.keras.models.load_model(sn2_model_path, compile=False)
+        model_roads_path = f"{self.models_path}/{self.model_roads}"
+        model_buildings_path = f"{self.models_path}/{self.model_buildings}" 
+        self.road_model = tf.keras.models.load_model(model_roads_path, compile=False)
+        self.building_model = tf.keras.models.load_model(model_buildings_path, compile=False)
         return self.road_model, self.building_model
     def get_raw_masks(self):
-        road_mask_path = f"{self.masks_path}/road_mask_img{self.im_num}.png"
         w_p, h_p, _ = self.im.shape
-        if(os.path.isfile(road_mask_path)):
-            self.road_mask = cv2.imread(road_mask_path, cv2.IMREAD_GRAYSCALE)
-        else:
-            road_mask_p = (self.road_model.predict(np.expand_dims(self.im, axis=0)/255.0)).reshape(w_p,h_p)
-            road_mask_p*=255.0
-            self.road_mask = road_mask_p.astype(np.uint8)
-            cv2.imwrite(road_mask_path, self.road_mask)
+        road_mask_p = (self.road_model.predict(np.expand_dims(self.im, axis=0)/255.0)).reshape(w_p,h_p)
+        road_mask_p*=255.0
+        self.road_mask = road_mask_p.astype(np.uint8)
         
-        building_mask_path = f"{self.masks_path}/building_mask_img{self.im_num}.png"
-        if(os.path.isfile(building_mask_path)):
-            self.building_mask = cv2.imread(building_mask_path, cv2.IMREAD_GRAYSCALE)
-        else:
-            building_mask_p = (self.building_model.predict(np.expand_dims(self.im, axis=0)/255.0)).reshape(w_p,h_p)
-            building_mask_p*=255.0
-            self.building_mask = building_mask_p.astype(np.uint8)
-            cv2.imwrite(building_mask_path, self.building_mask)
+        building_mask_p = (self.building_model.predict(np.expand_dims(self.im, axis=0)/255.0)).reshape(w_p,h_p)
+        building_mask_p*=255.0
+        self.building_mask = building_mask_p.astype(np.uint8)
         
         return self.road_mask, self.building_mask
     def blend_img_with_masks(self, alpha = 0.2):
@@ -168,7 +175,7 @@ class SegmentAndMap:
         ax.add_artist(scalebar)
         if save:
             fig.savefig(f"{self.proc_path}/img{self.im_num}.png")
-        plt.show()
+        # plt.show()
         return 
     def display_cv2(self):
         cv2.imshow('Image', self.im_display)
@@ -214,21 +221,21 @@ def floatdeg2str(fdeg):
     ssec = (fdeg - sdeg - smin/60)*60*60
     return f"{sign * sdeg}° {smin}' {ssec:.2f}\""
 
-if(__name__=="__main__"):
-    # sn3_model_path = "/mnt/l1/auto_top/SN3/models/unet_sn3_high.h5"
-    # sn2_model_path = "/mnt/l1/auto_top/SN2/models/unet_sn2.h5"
-
-    # road_model = tf.keras.models.load_model(sn3_model_path, compile=False)
-    # building_model = tf.keras.models.load_model(sn2_model_path, compile=False)
-
-    aoi_path = "/mnt/l1/auto_top/SN3/data/Paris/images/AOI_3_Paris"
-    # test_path = "/mnt/l1/auto_top/SN3/data/Paris/images/AOI_3_Paris/seg_test_data"
-
-    sn3_im_nums = [42, 49, 50, 99, 100, 132, 193, 219]
-    # P1 TODO : change root, change image loading
-    map1 = SegmentAndMap(aoi_path=aoi_path)
-    map1.load_img_from_im_num(sn3_im_nums[3])
-    map1.get_transform_information()
+def test_new_pipeline():
+    print("Testing flow from data/ and to plots")
+    curr_path = os.getcwd()
+    print(f"Currrent path = {curr_path}")
+    data_path = f"{curr_path}/data"
+    models_path = f"{curr_path}/models"
+    proc_path = f"{curr_path}/plots"
+    model_roads = "unet_roads.h5"
+    model_buildings = "unet_buildings.h5"
+    road_im_nums = [288, 220, 434, 406, 75] # Some dense images
+    map1 = SegmentAndMap(data_path=data_path, models_path = models_path, 
+                         proc_path=proc_path, 
+                         model_roads=model_roads, model_buildings=model_buildings)
+    
+    map1.load_img_from_im_num(road_im_nums[4])
     map1.load_models()
     map1.get_raw_masks()
     map1.refine_masks()
@@ -242,21 +249,18 @@ if(__name__=="__main__"):
     # map1.display_cv2()
     map1.display_plt(save=True)
 
-    # # arbitrary_img_fpath = f"/mnt/l1/auto_top/SN3/data/mumbai_test.png"
-    # print_transform_and_ref(fname_from_fnum(sn3_im_nums[3]))
-    # img, road_mask, building_mask = get_img_masks_raw(fname_from_fnum(sn3_im_nums[3]), road_model, building_model)
-    # # img, road_mask, building_mask = get_img_masks_raw(arbitrary_img_fpath, road_model, building_model)
-    # overlay = blend_both_masks(img, road_mask, building_mask)
-    # ref_road = refine_road_mask(road_mask)
-    # ref_building = refine_building_mask(building_mask)
-    # overlay_refined = blend_both_masks(img, ref_road, ref_building)
 
-    # # plot_cv2(overlay_refined)
-    # # plot_before_after(ref_road, skeletonize_road_mask(ref_road), tag="skeletonized")
-    # building_polygon_mask = polygonize_building_mask(ref_building)
-    # road_skeleton_mask = skeletonize_road_mask(ref_road)
-    # burned_img = burn_outlines(overlay_refined, road_skeleton_mask, building_polygon_mask)
-    # # plot_cv2(burned_img)
-    # get_road_graph(road_skeleton_mask)
-    # # plot_before_after(ref_building, p_building_mask, tag='polygonized')
+if(__name__=="__main__"):
+    # sn3_model_path = "/mnt/l1/auto_top/SN3/models/unet_sn3_high.h5"
+    # sn2_model_path = "/mnt/l1/auto_top/SN2/models/unet_sn2.h5"
+
+    # road_model = tf.keras.models.load_model(sn3_model_path, compile=False)
+    # building_model = tf.keras.models.load_model(sn2_model_path, compile=False)
+    test_new_pipeline()
+
+    # P1 TODO : change root, change image loading
+    # P1 TODO : draw proper lat long values 
+    # P1 TODO : doesn't matter if mass prediction not being done, just do one prediction
+
+
     
