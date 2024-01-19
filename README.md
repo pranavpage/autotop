@@ -16,6 +16,8 @@ Why? to reduce code size and provide modularity
     b. compare with dice, Jaccard [P2]
 4. post processing pipeline [P1] 
 5. package into app [P2]
+6. improve .gitignore
+7. make correct latlong
 
 ## Stretch TODOs
 1. stitch given .tifs into a map and show roads, buildings 
